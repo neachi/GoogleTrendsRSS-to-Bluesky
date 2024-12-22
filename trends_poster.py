@@ -6,7 +6,6 @@ from datetime import datetime
 import logging
 from bs4 import BeautifulSoup
 import requests
-from urllib.parse import urlparse
 
 # ロギングの設定
 logging.basicConfig(
@@ -40,20 +39,10 @@ def mark_as_posted(conn, trend_title):
     )
     conn.commit()
 
-def validate_image_url(url):
-    """画像URLの有効性を確認"""
-    try:
-        response = requests.head(url, timeout=5)
-        content_type = response.headers.get('content-type', '')
-        return response.status_code == 200 and 'image' in content_type.lower()
-    except Exception as e:
-        logging.warning(f"Image validation failed for URL {url}: {e}")
-        return False
-
 def get_trends_data():
     """RSSフィードを取得してパース"""
     response = requests.get('https://trends.google.co.jp/trending/rss?geo=JP')
-    response.encoding = 'utf-8'
+    response.encoding = 'utf-8'  # エンコーディングを明示的に指定
     soup = BeautifulSoup(response.content, 'xml')
     items = soup.find_all('item')
     
@@ -68,15 +57,9 @@ def get_trends_data():
         if news_item:
             news_title = news_item.find('ht:news_item_title')
             news_url = news_item.find('ht:news_item_url')
-            news_picture = news_item.find('ht:news_item_picture')
-            
             if news_title and news_url:
                 trend['news_title'] = news_title.text.strip()
                 trend['news_url'] = news_url.text.strip()
-                # 画像URLの取得と検証
-                if news_picture and validate_image_url(news_picture.text.strip()):
-                    trend['news_picture'] = news_picture.text.strip()
-                
                 # ニュースソースの取得
                 news_source = news_item.find('ht:news_item_source')
                 if news_source:
@@ -110,22 +93,13 @@ def create_rich_text(trend):
     return text, facets
 
 def create_embed_card(trend):
-    """リンクカードの作成（画像対応）"""
-    external_params = {
-        'title': trend['news_title'],
-        'description': f"Source: {trend.get('news_source', 'News')}",
-        'uri': trend['news_url']
-    }
-    
-    # 画像URLが存在する場合は追加
-    if 'news_picture' in trend:
-        external_params['thumb'] = models.AppBskyEmbedExternal.External.Thumb(
-            alt=trend['news_title'],
-            uri=trend['news_picture']
-        )
-    
+    """リンクカードの作成"""
     return models.AppBskyEmbedExternal.Main(
-        external=models.AppBskyEmbedExternal.External(**external_params)
+        external=models.AppBskyEmbedExternal.External(
+            title=trend['news_title'],
+            description=f"Source: {trend.get('news_source', 'News')}",
+            uri=trend['news_url']
+        )
     )
 
 def main():
