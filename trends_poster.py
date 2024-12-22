@@ -4,6 +4,7 @@ import sqlite3
 from atproto import Client
 from datetime import datetime
 import logging
+from xml.etree import ElementTree as ET
 
 # ロギングの設定
 logging.basicConfig(
@@ -37,6 +38,28 @@ def mark_as_posted(conn, trend_title):
     )
     conn.commit()
 
+def format_post_content(entry):
+    """エントリーから投稿内容を生成"""
+    title = entry.title
+    
+    # ht:news_item タグを探す
+    news_items = entry.get('ht_news_item', [])
+    
+    if not news_items:  # 関連記事がない場合
+        return title
+    
+    # 最初の関連記事の情報を取得
+    first_news = news_items[0]
+    news_title = first_news.get('ht_news_item_title', '')
+    news_url = first_news.get('ht_news_item_url', '')
+    
+    # 関連記事の情報がある場合
+    if news_title and news_url:
+        return f"{title}\n{news_title}\n{news_url}"
+    
+    # 関連記事の情報が不完全な場合
+    return title
+
 def main():
     # Blueskyクレデンシャルの取得
     username = os.environ['BLUESKY_USERNAME']
@@ -55,8 +78,10 @@ def main():
         
         for entry in feed.entries:
             if not is_already_posted(conn, entry.title):
-                # 投稿テキストの作成と投稿
-                post_text = f"🔍 Google トレンド: {entry.title}\n\n{entry.link}"
+                # 投稿内容のフォーマット
+                post_text = format_post_content(entry)
+                
+                # Blueskyに投稿
                 client.send_post(text=post_text)
                 
                 # 投稿済みとしてマーク
