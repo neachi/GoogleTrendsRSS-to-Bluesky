@@ -40,6 +40,31 @@ def mark_as_posted(conn, trend_title):
     )
     conn.commit()
 
+def get_ogp_image(url):
+    """URLからOGP画像を取得"""
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # OGP画像の取得を試みる
+        og_image = (
+            soup.find('meta', property='og:image') or 
+            soup.find('meta', property='og:image:secure_url') or
+            soup.find('meta', property='twitter:image')
+        )
+        
+        if og_image and og_image.get('content'):
+            # 画像URLが存在することを確認
+            img_url = og_image['content']
+            img_response = requests.head(img_url, timeout=5)
+            if img_response.status_code == 200:
+                return img_url
+    except Exception as e:
+        logging.warning(f"Failed to get OGP image from {url}: {e}")
+    
+    return None
+
 def get_trends_data():
     """RSSフィードを取得してパース"""
     response = requests.get('https://trends.google.co.jp/trending/rss?geo=JP')
@@ -62,6 +87,11 @@ def get_trends_data():
             if news_title and news_url:
                 trend['news_title'] = news_title.text.strip()
                 trend['news_url'] = news_url.text.strip()
+                
+                # OGP画像の取得
+                ogp_image = get_ogp_image(news_url.text.strip())
+                if ogp_image:
+                    trend['ogp_image'] = ogp_image
                 
                 # ニュースソースの取得
                 news_source = news_item.find('ht:news_item_source')
@@ -96,13 +126,23 @@ def create_rich_text(trend):
     return text, facets
 
 def create_embed_card(trend):
-    """リンクカードの作成"""
+    """リンクカードの作成（OGP画像対応）"""
+    external_params = {
+        'uri': trend['news_url'],
+        'title': trend['news_title'],
+        'description': f"Source: {trend.get('news_source', 'News')}"
+    }
+    
+    # OGP画像が存在する場合は追加
+    if 'ogp_image' in trend:
+        external_params['thumb'] = {
+            'uri': trend['ogp_image'],
+            '$type': 'blob',
+            'mimeType': 'image/jpeg',  # 一般的な画像タイプとして指定
+        }
+    
     return models.AppBskyEmbedExternal.Main(
-        external=models.AppBskyEmbedExternal.External(
-            uri=trend['news_url'],
-            title=trend['news_title'],
-            description=f"Source: {trend.get('news_source', 'News')}"
-        )
+        external=models.AppBskyEmbedExternal.External(**external_params)
     )
 
 def main():
@@ -124,16 +164,24 @@ def main():
         for trend in trends:
             if not is_already_posted(conn, trend['title']):
                 if 'news_title' in trend and 'news_url' in trend:
-                    # リッチテキストとリンクカードを作成
+                    # リッチテキストを作成
                     text, facets = create_rich_text(trend)
-                    embed = create_embed_card(trend)
                     
-                    # 投稿を作成
-                    client.send_post(
-                        text=text,
-                        facets=facets,
-                        embed=embed
-                    )
+                    # OGP画像が存在する場合のみリンクカードを作成
+                    if 'ogp_image' in trend:
+                        embed = create_embed_card(trend)
+                        # リンクカード付きで投稿
+                        client.send_post(
+                            text=text,
+                            facets=facets,
+                            embed=embed
+                        )
+                    else:
+                        # リンクカードなしで投稿
+                        client.send_post(
+                            text=text,
+                            facets=facets
+                        )
                 else:
                     # ニュース記事がない場合はシンプルに投稿
                     client.send_post(text=trend['title'])
