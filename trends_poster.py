@@ -42,13 +42,14 @@ def mark_as_posted(conn, trend_title):
 def get_trends_data():
     """RSSフィードを取得してパース"""
     response = requests.get('https://trends.google.co.jp/trending/rss?geo=JP')
+    response.encoding = 'utf-8'  # エンコーディングを明示的に指定
     soup = BeautifulSoup(response.content, 'xml')
     items = soup.find_all('item')
     
     trends = []
     for item in items:
         trend = {
-            'title': item.find('title').text
+            'title': item.find('title').text.strip()
         }
         
         # ニュース項目の取得
@@ -57,12 +58,12 @@ def get_trends_data():
             news_title = news_item.find('ht:news_item_title')
             news_url = news_item.find('ht:news_item_url')
             if news_title and news_url:
-                trend['news_title'] = news_title.text
-                trend['news_url'] = news_url.text
+                trend['news_title'] = news_title.text.strip()
+                trend['news_url'] = news_url.text.strip()
                 # ニュースソースの取得
                 news_source = news_item.find('ht:news_item_source')
                 if news_source:
-                    trend['news_source'] = news_source.text
+                    trend['news_source'] = news_source.text.strip()
         
         trends.append(trend)
     
@@ -72,9 +73,9 @@ def create_rich_text(trend):
     """リッチテキストとファセット（リンク情報）を作成"""
     text = f"{trend['title']}\n\n{trend['news_title']}\n{trend['news_url']}"
     
-    # URLの開始位置を計算
-    url_start = len(f"{trend['title']}\n\n{trend['news_title']}\n")
-    url_end = url_start + len(trend['news_url'])
+    # URLの開始位置を計算（バイト単位）
+    url_start = len(f"{trend['title']}\n\n{trend['news_title']}\n".encode('utf-8'))
+    url_end = url_start + len(trend['news_url'].encode('utf-8'))
     
     # ファセットの作成（リンク情報）
     facets = [
