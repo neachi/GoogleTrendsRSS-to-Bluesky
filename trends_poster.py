@@ -50,6 +50,13 @@ def validate_image_url(url):
         logging.warning(f"Image validation failed for URL {url}: {e}")
         return False
 
+def get_image_dimensions(url):
+    """画像のサイズを取得（デフォルト値を返す）"""
+    return {
+        'width': 1000,
+        'height': 600,
+    }
+
 def get_trends_data():
     """RSSフィードを取得してパース"""
     response = requests.get('https://trends.google.co.jp/trending/rss?geo=JP')
@@ -111,18 +118,26 @@ def create_rich_text(trend):
 
 def create_embed_card(trend):
     """リンクカードの作成（画像対応）"""
-    external = {
-        'title': trend['news_title'],
-        'description': f"Source: {trend.get('news_source', 'News')}",
-        'uri': trend['news_url']
-    }
-    
-    # 画像URLが存在する場合は追加
     if 'news_picture' in trend:
-        external['thumb'] = trend['news_picture']
-    
+        # 画像の寸法を取得（または推定）
+        dimensions = get_image_dimensions(trend['news_picture'])
+        thumb = {
+            'ref': {'$link': trend['news_picture']},
+            'mimeType': 'image/jpeg',  # 一般的な画像タイプとして指定
+            'size': 100000,  # デフォルトサイズ
+            'width': dimensions['width'],
+            'height': dimensions['height']
+        }
+    else:
+        thumb = None
+
     return models.AppBskyEmbedExternal.Main(
-        external=models.AppBskyEmbedExternal.External(**external)
+        external=models.AppBskyEmbedExternal.External(
+            uri=trend['news_url'],
+            title=trend['news_title'],
+            description=f"Source: {trend.get('news_source', 'News')}",
+            thumb=thumb
+        )
     )
 
 def main():
