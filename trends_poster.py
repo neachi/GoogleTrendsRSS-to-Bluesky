@@ -151,23 +151,25 @@ def create_embed_card(client, trend):
     
     # OGP画像が存在する場合
     if 'ogp_image' in trend:
-        # 画像のサイズとタイプを取得
-        size, mime_type = get_image_size_and_type(trend['ogp_image'])
-        
-        if size:
-            # 画像をBlueskyにアップロード
-            with requests.get(trend['ogp_image'], timeout=5) as response:
-                img_data = response.content
-                upload = client.com.atproto.repo.upload_blob(img_data)
+        try:
+            # 画像のサイズとタイプを取得
+            size, mime_type = get_image_size_and_type(trend['ogp_image'])
             
-            # サムネイル情報を設定
-            external_params['thumb'] = {
-                'ref': {
-                    '$link': upload.blob.ref
-                },
-                'mime_type': mime_type,
-                'size': size
-            }
+            if size:
+                # 画像をBlueskyにアップロード
+                with requests.get(trend['ogp_image'], timeout=5) as response:
+                    img_data = response.content
+                    upload = client.com.atproto.repo.upload_blob(img_data)
+                
+                # サムネイル情報を設定
+                external_params['thumb'] = {
+                    'ref': upload.blob.ref,  # 直接refを使用
+                    'mimeType': mime_type,   # キャメルケースに修正
+                    'size': size
+                }
+        except Exception as e:
+            logging.warning(f"Failed to process image: {e}")
+            # 画像処理に失敗した場合は画像なしで続行
     
     return models.AppBskyEmbedExternal.Main(
         external=models.AppBskyEmbedExternal.External(**external_params)
