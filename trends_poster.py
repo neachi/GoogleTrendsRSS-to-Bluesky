@@ -40,23 +40,6 @@ def mark_as_posted(conn, trend_title):
     )
     conn.commit()
 
-def validate_image_url(url):
-    """画像URLの有効性を確認"""
-    try:
-        response = requests.head(url, timeout=5)
-        content_type = response.headers.get('content-type', '')
-        return response.status_code == 200 and 'image' in content_type.lower()
-    except Exception as e:
-        logging.warning(f"Image validation failed for URL {url}: {e}")
-        return False
-
-def get_image_dimensions(url):
-    """画像のサイズを取得（デフォルト値を返す）"""
-    return {
-        'width': 1000,
-        'height': 600,
-    }
-
 def get_trends_data():
     """RSSフィードを取得してパース"""
     response = requests.get('https://trends.google.co.jp/trending/rss?geo=JP')
@@ -75,14 +58,10 @@ def get_trends_data():
         if news_item:
             news_title = news_item.find('ht:news_item_title')
             news_url = news_item.find('ht:news_item_url')
-            news_picture = news_item.find('ht:news_item_picture')
             
             if news_title and news_url:
                 trend['news_title'] = news_title.text.strip()
                 trend['news_url'] = news_url.text.strip()
-                # 画像URLの取得と検証
-                if news_picture and validate_image_url(news_picture.text.strip()):
-                    trend['news_picture'] = news_picture.text.strip()
                 
                 # ニュースソースの取得
                 news_source = news_item.find('ht:news_item_source')
@@ -117,26 +96,12 @@ def create_rich_text(trend):
     return text, facets
 
 def create_embed_card(trend):
-    """リンクカードの作成（画像対応）"""
-    if 'news_picture' in trend:
-        # 画像の寸法を取得（または推定）
-        dimensions = get_image_dimensions(trend['news_picture'])
-        thumb = {
-            'ref': {'$link': trend['news_picture']},
-            'mimeType': 'image/jpeg',  # 一般的な画像タイプとして指定
-            'size': 100000,  # デフォルトサイズ
-            'width': dimensions['width'],
-            'height': dimensions['height']
-        }
-    else:
-        thumb = None
-
+    """リンクカードの作成"""
     return models.AppBskyEmbedExternal.Main(
         external=models.AppBskyEmbedExternal.External(
             uri=trend['news_url'],
             title=trend['news_title'],
-            description=f"Source: {trend.get('news_source', 'News')}",
-            thumb=thumb
+            description=f"Source: {trend.get('news_source', 'News')}"
         )
     )
 
