@@ -111,7 +111,7 @@ def create_rich_text(trend):
 
 def create_embed_card(trend):
     """リンクカードの作成（画像対応）"""
-    external_params = {
+    external = {
         'title': trend['news_title'],
         'description': f"Source: {trend.get('news_source', 'News')}",
         'uri': trend['news_url']
@@ -119,13 +119,10 @@ def create_embed_card(trend):
     
     # 画像URLが存在する場合は追加
     if 'news_picture' in trend:
-        external_params['thumb'] = models.AppBskyEmbedExternal.External.Thumb(
-            alt=trend['news_title'],
-            uri=trend['news_picture']
-        )
+        external['thumb'] = trend['news_picture']
     
     return models.AppBskyEmbedExternal.Main(
-        external=models.AppBskyEmbedExternal.External(**external_params)
+        external=models.AppBskyEmbedExternal.External(**external)
     )
 
 def main():
