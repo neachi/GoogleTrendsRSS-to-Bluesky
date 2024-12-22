@@ -1,115 +1,51 @@
 import os
+import requests
 import feedparser
-import sqlite3
 from atproto import Client, models
 from datetime import datetime
-import logging
-from bs4 import BeautifulSoup
-import requests
 from urllib.parse import urlparse
 
-# ロギングの設定
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# 環境変数
+BSKY_USERNAME = os.getenv("BSKY_USERNAME")
+BSKY_PASSWORD = os.getenv("BSKY_PASSWORD")
+GOOGLE_TRENDS_RSS = os.getenv("GOOGLE_TRENDS_RSS")
 
-def init_database():
-    """データベースの初期化"""
-    conn = sqlite3.connect('trends.db')
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS posted_trends
-        (trend_title TEXT PRIMARY KEY, posted_at TIMESTAMP)
-    ''')
-    conn.commit()
-    return conn
+# RSSフィードの取得
+def fetch_rss_feed(feed_url):
+    return feedparser.parse(feed_url)
 
-def is_already_posted(conn, trend_title):
-    """トレンドが既に投稿済みかチェック"""
-    c = conn.cursor()
-    c.execute('SELECT 1 FROM posted_trends WHERE trend_title = ?', (trend_title,))
-    return c.fetchone() is not None
-
-def mark_as_posted(conn, trend_title):
-    """トレンドを投稿済みとしてマーク"""
-    c = conn.cursor()
-    c.execute(
-        'INSERT INTO posted_trends (trend_title, posted_at) VALUES (?, ?)',
-        (trend_title, datetime.now())
-    )
-    conn.commit()
-
+# 画像URLのバリデーション
 def validate_image_url(url):
-    """画像URLの有効性を確認"""
     try:
-        response = requests.head(url, timeout=5)
-        content_type = response.headers.get('content-type', '')
-        # コンテンツタイプが'image'を含むか確認
-        return response.status_code == 200 and 'image' in content_type.lower()
-    except Exception as e:
-        logging.warning(f"Image validation failed for URL {url}: {e}")
+        response = requests.head(url)
+        content_type = response.headers.get("Content-Type", "")
+        return response.status_code == 200 and content_type.startswith("image/")
+    except Exception:
         return False
 
-def get_trends_data():
-    """RSSフィードを取得してパース"""
-    response = requests.get('https://trends.google.co.jp/trending/rss?geo=JP')
-    response.encoding = 'utf-8'
-    soup = BeautifulSoup(response.content, 'xml')
-    items = soup.find_all('item')
-    
+# トレンドデータの作成
+def parse_trends(feed):
     trends = []
-    for item in items:
+    for entry in feed.entries:
         trend = {
-            'title': item.find('title').text.strip()
+            "title": entry.title,
+            "url": entry.link,
+            "news_title": entry.get("ht_news_item_title", ""),
+            "news_url": entry.get("ht_news_item_url", ""),
+            "news_source": entry.get("ht_news_item_source", ""),
+            "news_picture": entry.get("ht_news_item_picture", "")
         }
-        
-        # ニュース項目の取得
-        news_item = item.find('ht:news_item')
-        if news_item:
-            news_title = news_item.find('ht:news_item_title')
-            news_url = news_item.find('ht:news_item_url')
-            news_picture = news_item.find('ht:news_item_picture')
-            
-            if news_title and news_url:
-                trend['news_title'] = news_title.text.strip()
-                trend['news_url'] = news_url.text.strip()
-                # 画像URLの取得と検証
-                if news_picture and validate_image_url(news_picture.text.strip()):
-                    trend['news_picture'] = news_picture.text.strip()
-                
-                # ニュースソースの取得
-                news_source = news_item.find('ht:news_item_source')
-                if news_source:
-                    trend['news_source'] = news_source.text.strip()
-        
         trends.append(trend)
-    
     return trends
 
-def create_rich_text(trend):
-    """リッチテキストとファセット（リンク情報）を作成"""
-    text = f"{trend['title']}\n\n{trend['news_title']}\n{trend['news_url']}"
-    
-    # URLの開始位置を計算（バイト単位）
-    url_start = len(f"{trend['title']}\n\n{trend['news_title']}\n".encode('utf-8'))
-    url_end = url_start + len(trend['news_url'].encode('utf-8'))
-    
-    # ファセットの作成（リンク情報）
-    facets = [
-        models.AppBskyRichtextFacet.Main(
-            features=[
-                models.AppBskyRichtextFacet.Link(uri=trend['news_url'])
-            ],
-            index=models.AppBskyRichtextFacet.ByteSlice(
-                byteStart=url_start,
-                byteEnd=url_end
-            )
-        )
-    ]
-    
-    return text, facets
+# Bluesky投稿の作成
+def create_post_text(trend):
+    post_text = f"{trend['title']}\n\n"
+    if trend['news_title'] and trend['news_url']:
+        post_text += f"{trend['news_title']}\n{trend['news_url']}\n\n"
+    return post_text.strip()
 
+# リンクカードの作成
 def create_embed_card(trend):
     """リンクカードの作成（画像対応）"""
     external_params = {
@@ -119,59 +55,58 @@ def create_embed_card(trend):
     }
     
     # 画像URLが存在する場合は追加
-    if 'news_picture' in trend and validate_image_url(trend['news_picture']):
-        external_params['thumb'] = models.AppBskyEmbedExternal.External.Thumb(
-            alt=trend['news_title'],
-            uri=trend['news_picture']
-        )
+    if trend['news_picture'] and validate_image_url(trend['news_picture']):
+        external_params['thumb'] = trend['news_picture']
     
     return models.AppBskyEmbedExternal.Main(
         external=models.AppBskyEmbedExternal.External(**external_params)
     )
 
-def main():
-    # Blueskyクレデンシャルの取得
-    username = os.environ['BLUESKY_USERNAME']
-    password = os.environ['BLUESKY_PASSWORD']
-
-    # Blueskyクライアントの初期化
-    client = Client()
-    client.login(username, password)
-
-    # データベース接続
-    conn = init_database()
-
-    try:
-        # トレンドデータの取得
-        trends = get_trends_data()
+# トレンド投稿の処理
+def post_trends_to_bluesky(client, trends):
+    for trend in trends:
+        post_text = create_post_text(trend)
         
-        for trend in trends:
-            if not is_already_posted(conn, trend['title']):
-                if 'news_title' in trend and 'news_url' in trend:
-                    # リッチテキストとリンクカードを作成
-                    text, facets = create_rich_text(trend)
-                    embed = create_embed_card(trend)
-                    
-                    # 投稿を作成
-                    client.send_post(
-                        text=text,
-                        facets=facets,
+        embed = None
+        if trend['news_title'] and trend['news_url']:
+            embed = create_embed_card(trend)
+        
+        try:
+            client.com.atproto.repo.create_record(
+                models.ComAtprotoRepoCreateRecord.Data(
+                    repo=client.me.did,
+                    collection="app.bsky.feed.post",
+                    record=models.AppBskyFeedPost.Main(
+                        text=post_text,
+                        createdAt=datetime.utcnow().isoformat(),
                         embed=embed
                     )
-                else:
-                    # ニュース記事がない場合はシンプルに投稿
-                    client.send_post(text=trend['title'])
-                
-                # 投稿済みとしてマーク
-                mark_as_posted(conn, trend['title'])
-                logging.info(f"Posted new trend: {trend['title']}")
+                )
+            )
+            print(f"Posted: {post_text[:30]}...")
+        except Exception as e:
+            print(f"Failed to post trend: {trend['title']} - Error: {e}")
 
+# メイン処理
+def main():
+    # RSSフィードの取得
+    feed = fetch_rss_feed(GOOGLE_TRENDS_RSS)
+    trends = parse_trends(feed)
+    
+    if not trends:
+        print("No trends found.")
+        return
+
+    # Blueskyにログイン
+    client = Client()
+    client.login(BSKY_USERNAME, BSKY_PASSWORD)
+
+    # トレンドを投稿
+    try:
+        post_trends_to_bluesky(client, trends)
     except Exception as e:
-        logging.error(f"Error occurred: {e}")
+        print(f"Error occurred: {e}")
         raise e
-
-    finally:
-        conn.close()
 
 if __name__ == "__main__":
     main()
