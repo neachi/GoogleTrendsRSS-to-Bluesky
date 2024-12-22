@@ -1,7 +1,7 @@
 import os
 import feedparser
 import sqlite3
-from atproto import Client
+from atproto import Client, models
 from datetime import datetime
 import logging
 from bs4 import BeautifulSoup
@@ -54,18 +54,52 @@ def get_trends_data():
         # ニュース項目の取得
         news_item = item.find('ht:news_item')
         if news_item:
-            trend['news_title'] = news_item.find('ht:news_item_title').text
-            trend['news_url'] = news_item.find('ht:news_item_url').text
+            news_title = news_item.find('ht:news_item_title')
+            news_url = news_item.find('ht:news_item_url')
+            if news_title and news_url:
+                trend['news_title'] = news_title.text
+                trend['news_url'] = news_url.text
+                # ニュースソースの取得
+                news_source = news_item.find('ht:news_item_source')
+                if news_source:
+                    trend['news_source'] = news_source.text
         
         trends.append(trend)
     
     return trends
 
-def format_post_content(trend):
-    """投稿内容のフォーマット"""
-    if 'news_title' in trend and 'news_url' in trend:
-        return f"{trend['title']}\n\n{trend['news_title']}\n{trend['news_url']}"
-    return trend['title']
+def create_rich_text(trend):
+    """リッチテキストとファセット（リンク情報）を作成"""
+    text = f"{trend['title']}\n\n{trend['news_title']}\n{trend['news_url']}"
+    
+    # URLの開始位置を計算
+    url_start = len(f"{trend['title']}\n\n{trend['news_title']}\n")
+    url_end = url_start + len(trend['news_url'])
+    
+    # ファセットの作成（リンク情報）
+    facets = [
+        models.AppBskyRichtextFacet.Main(
+            features=[
+                models.AppBskyRichtextFacet.Link(uri=trend['news_url'])
+            ],
+            index=models.AppBskyRichtextFacet.ByteSlice(
+                byteStart=url_start,
+                byteEnd=url_end
+            )
+        )
+    ]
+    
+    return text, facets
+
+def create_embed_card(trend):
+    """リンクカードの作成"""
+    return models.AppBskyEmbedExternal.Main(
+        external=models.AppBskyEmbedExternal.External(
+            title=trend['news_title'],
+            description=f"Source: {trend.get('news_source', 'News')}",
+            uri=trend['news_url']
+        )
+    )
 
 def main():
     # Blueskyクレデンシャルの取得
@@ -85,11 +119,20 @@ def main():
         
         for trend in trends:
             if not is_already_posted(conn, trend['title']):
-                # 投稿内容のフォーマット
-                post_text = format_post_content(trend)
-                
-                # Blueskyに投稿
-                client.send_post(text=post_text)
+                if 'news_title' in trend and 'news_url' in trend:
+                    # リッチテキストとリンクカードを作成
+                    text, facets = create_rich_text(trend)
+                    embed = create_embed_card(trend)
+                    
+                    # 投稿を作成
+                    client.send_post(
+                        text=text,
+                        facets=facets,
+                        embed=embed
+                    )
+                else:
+                    # ニュース記事がない場合はシンプルに投稿
+                    client.send_post(text=trend['title'])
                 
                 # 投稿済みとしてマーク
                 mark_as_posted(conn, trend['title'])
