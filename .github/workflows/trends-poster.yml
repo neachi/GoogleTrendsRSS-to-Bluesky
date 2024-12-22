@@ -1,0 +1,40 @@
+name: Google Trends to Bluesky Poster
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # 15分ごとに実行
+  workflow_dispatch:  # 手動実行用
+
+jobs:
+  post-trends:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install feedparser atproto
+
+      - name: Load previous trends
+        id: load-trends
+        uses: actions/cache@v3
+        with:
+          path: trends.db
+          key: ${{ runner.os }}-trends-db-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-trends-db-
+
+      - name: Run trends poster
+        env:
+          BLUESKY_USERNAME: ${{ secrets.BLUESKY_USERNAME }}
+          BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
+        run: |
+          python trends_poster.py
