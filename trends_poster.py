@@ -197,24 +197,27 @@ def main():
                     # リッチテキストを作成
                     text, facets = create_rich_text(trend)
                     
+                    # 投稿のベースパラメータ（言語設定を含む）
+                    post_params = {
+                        'text': text,
+                        'facets': facets,
+                        'langs': ['ja']  # 日本語を指定
+                    }
+                    
                     # OGP画像が存在する場合のみリンクカードを作成
                     if 'ogp_image' in trend:
                         embed = create_embed_card(client, trend)
                         # リンクカード付きで投稿
-                        client.send_post(
-                            text=text,
-                            facets=facets,
-                            embed=embed
-                        )
-                    else:
-                        # リンクカードなしで投稿
-                        client.send_post(
-                            text=text,
-                            facets=facets
-                        )
+                        post_params['embed'] = embed
+                    
+                    # 投稿を実行
+                    client.send_post(**post_params)
                 else:
-                    # ニュース記事がない場合はシンプルに投稿
-                    client.send_post(text=trend['title'])
+                    # ニュース記事がない場合はシンプルに投稿（言語設定付き）
+                    client.send_post(
+                        text=trend['title'],
+                        langs=['ja']
+                    )
                 
                 # 投稿済みとしてマーク
                 mark_as_posted(conn, trend['title'])
