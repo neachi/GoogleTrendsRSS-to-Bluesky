@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import requests
 from urllib.parse import urlparse
 import io
+from PIL import Image
 
 # ロギングの設定
 logging.basicConfig(
@@ -65,6 +66,46 @@ def get_ogp_image(url):
         logging.warning(f"Failed to get OGP image from {url}: {e}")
     
     return None
+
+def resize_image(img_data, max_size_kb=900):
+    """画像をリサイズして指定したサイズ以下にする"""
+    try:
+        # バイトデータからPIL Imageを作成
+        img = Image.open(io.BytesIO(img_data))
+        
+        # 元のフォーマットを保持
+        format = img.format or 'JPEG'
+        
+        # 画像の現在のサイズ（バイト）を取得
+        current_size = len(img_data)
+        current_kb = current_size / 1024
+        
+        if current_kb <= max_size_kb:
+            return img_data
+        
+        # 縮小率を計算
+        scale = (max_size_kb / current_kb) ** 0.5
+        new_width = int(img.width * scale)
+        new_height = int(img.height * scale)
+        
+        # 画像をリサイズ
+        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # 新しい画像をバイトデータとして取得
+        output = io.BytesIO()
+        
+        # PNGの場合は品質パラメータは使用しない
+        if format == 'PNG':
+            img.save(output, format=format, optimize=True)
+        else:
+            # JPEG等の場合は品質も調整
+            img.save(output, format=format, quality=85, optimize=True)
+        
+        return output.getvalue()
+        
+    except Exception as e:
+        logging.warning(f"Failed to resize image: {e}")
+        return None
 
 def get_trends_data():
     """RSSフィードを取得してパース"""
@@ -126,21 +167,6 @@ def create_rich_text(trend):
     
     return text, facets
 
-def get_image_size_and_type(image_url):
-    """画像のサイズとタイプを取得"""
-    try:
-        response = requests.get(image_url, timeout=5)
-        response.raise_for_status()
-        
-        # 画像データを取得
-        img_data = response.content
-        
-        # Blueskyに画像をアップロード
-        return len(img_data), response.headers.get('content-type', 'image/jpeg')
-    except Exception as e:
-        logging.warning(f"Failed to get image size: {e}")
-        return None, None
-
 def create_embed_card(client, trend):
     """リンクカードの作成（OGP画像対応）"""
     external_params = {
@@ -152,21 +178,22 @@ def create_embed_card(client, trend):
     # OGP画像が存在する場合
     if 'ogp_image' in trend:
         try:
-            # 画像のサイズとタイプを取得
-            size, mime_type = get_image_size_and_type(trend['ogp_image'])
-            
-            if size:
-                # 画像をBlueskyにアップロード
-                with requests.get(trend['ogp_image'], timeout=5) as response:
-                    img_data = response.content
-                    upload = client.com.atproto.repo.upload_blob(img_data)
+            # 画像のダウンロードとリサイズ
+            with requests.get(trend['ogp_image'], timeout=5) as response:
+                img_data = response.content
+                # 画像をリサイズ
+                resized_img_data = resize_image(img_data)
                 
-                # サムネイル情報を設定
-                external_params['thumb'] = {
-                    'ref': upload.blob.ref,  # 直接refを使用
-                    'mimeType': mime_type,   # キャメルケースに修正
-                    'size': size
-                }
+                if resized_img_data:
+                    # リサイズした画像をアップロード
+                    upload = client.com.atproto.repo.upload_blob(resized_img_data)
+                    
+                    # サムネイル情報を設定
+                    external_params['thumb'] = {
+                        'ref': upload.blob.ref,
+                        'mimeType': response.headers.get('content-type', 'image/jpeg'),
+                        'size': len(resized_img_data)
+                    }
         except Exception as e:
             logging.warning(f"Failed to process image: {e}")
             # 画像処理に失敗した場合は画像なしで続行
