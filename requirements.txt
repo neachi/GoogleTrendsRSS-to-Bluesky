@@ -1,5 +1,6 @@
-atproto-client
+atproto
 beautifulsoup4
 requests
 feedparser
 Pillow
+lxml
