@@ -214,41 +214,38 @@ def main():
     # データベース接続
     conn = init_database()
 
-    try:
-        # トレンドデータの取得
-        trends = get_trends_data()
-        
-        for trend in trends:
-            if not is_already_posted(conn, trend['title']):
-                if 'news_title' in trend and 'news_url' in trend:
-                    # リッチテキストを作成
-                    text, facets = create_rich_text(trend)
-                    
-                    # 投稿のベースパラメータ（言語設定を含む）
-                    post_params = {
-                        'text': text,
-                        'facets': facets,
-                        'langs': ['ja']  # 日本語を指定
-                    }
-                    
-                    # OGP画像が存在する場合のみリンクカードを作成
-                    if 'ogp_image' in trend:
-                        embed = create_embed_card(client, trend)
-                        # リンクカード付きで投稿
-                        post_params['embed'] = embed
-                    
-                    # 投稿を実行
-                    client.send_post(**post_params)
-                else:
-                    # ニュース記事がない場合はシンプルに投稿（言語設定付き）
-                    client.send_post(
-                        text=trend['title'],
-                        langs=['ja']
-                    )
-                
-                # 投稿済みとしてマーク
-                mark_as_posted(conn, trend['title'])
-                logging.info(f"Posted new trend: {trend['title']}")
+try:
+    # トレンドデータの取得
+    trends = get_trends_data()
+    
+    for trend in trends:
+        # 記事情報（タイトルとURL）が両方存在する場合のみ処理を続行
+        if ('news_title' in trend and 
+            'news_url' in trend and 
+            not is_already_posted(conn, trend['title'])):
+            
+            # リッチテキストを作成
+            text, facets = create_rich_text(trend)
+            
+            # 投稿のベースパラメータ（言語設定を含む）
+            post_params = {
+                'text': text,
+                'facets': facets,
+                'langs': ['ja']  # 日本語を指定
+            }
+            
+            # OGP画像が存在する場合のみリンクカードを作成
+            if 'ogp_image' in trend:
+                embed = create_embed_card(client, trend)
+                # リンクカード付きで投稿
+                post_params['embed'] = embed
+            
+            # 投稿を実行
+            client.send_post(**post_params)
+            
+            # 投稿済みとしてマーク
+            mark_as_posted(conn, trend['title'])
+            logging.info(f"Posted new trend: {trend['title']}")
 
     except Exception as e:
         logging.error(f"Error occurred: {e}")
