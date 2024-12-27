@@ -119,7 +119,7 @@ def parse_traffic_volume(traffic_str):
         return int(match.group(1))
     return 0
 
-def meets_volume_threshold(traffic_str, min_volume=1000):
+def meets_volume_threshold(traffic_str, min_volume=500):
     """検索ボリュームが閾値を満たすかチェック"""
     volume = parse_traffic_volume(traffic_str)
     return volume >= min_volume
